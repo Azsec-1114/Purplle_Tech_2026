@@ -1,0 +1,78 @@
+version: "3.8"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: store-intel/api:latest
+    container_name: si_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      STORE_ID: ${STORE_ID:-STORE_BLR_002}
+      DB_PATH: /app/data/store.db
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PYTHONUNBUFFERED: "1"
+      UVICORN_WORKERS: "2"
+    volumes:
+      - store_data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').getcode() == 200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    networks:
+      - si_net
+
+  # Assuming Pipeline is defined per architecture specs here
+  pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile.pipeline
+    container_name: si_pipeline
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - si_net
+
+  dashboard-web:
+    build: dashboard/web
+    container_name: si_dashboard_web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      VITE_API_URL: http://api:8000
+      VITE_STORE_ID: ${STORE_ID:-STORE_BLR_002}
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - si_net
+
+  dashboard-terminal:
+    build: dashboard/
+    container_name: si_dashboard_terminal
+    restart: unless-stopped
+    environment:
+      API_URL: http://api:8000
+      STORE_ID: ${STORE_ID:-STORE_BLR_002}
+    depends_on:
+      api:
+        condition: service_healthy
+    tty: true # Required for terminal rich output
+    stdin_open: true
+    networks:
+      - si_net
+
+volumes:
+  store_data:
+    driver: local
+
+networks:
+  si_net:
+    driver: bridge
